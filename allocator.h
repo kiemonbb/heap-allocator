@@ -1,3 +1,6 @@
+#ifndef ALLOCATOR_H
+#define ALLOCATOR_H
+
 #include <stddef.h>
 
 // Our default struct containing all the necessary information about our memory
@@ -9,3 +12,10 @@ typedef struct mchunk_t {
   struct mchunk_t *fd_chunk;
   struct mchunk_t *bk_chunk;
 } mchunk_t;
+
+/*
+ * Function declarations
+ */
+
+void *allocate(size_t);
+#endif
