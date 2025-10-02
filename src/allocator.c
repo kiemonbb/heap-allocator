@@ -1,5 +1,6 @@
 #include <stddef.h>
 #include <stdio.h>
+#include <string.h>
 #include <unistd.h>
 
 #include "allocator.h"
@@ -7,29 +8,6 @@
 // This chunk is always placed on top of the accessible memory and new chunks
 // are split off of it. During the allocation it may be enlarged if necessary.
 static struct mchunk_t *top = NULL;
-
-size_t calculate_needed_memory(size_t chunks_payload) {
-  size_t needed_memory = chunks_payload + CHUNK_HDR_SIZE <= MIN_CHUNK_SIZE
-                             ? MIN_CHUNK_SIZE
-                             : chunks_payload + CHUNK_HDR_SIZE;
-  return needed_memory;
-}
-
-// Our memory chunks are going to be 16 bit aligned in order for our heap to
-// work correctly.
-size_t align_up_to_multiple_of_16(size_t number_to_align) {
-  size_t aligned_number =
-      number_to_align % MEM_ALIGNMENT == 0
-          ? number_to_align
-          : number_to_align - number_to_align % MEM_ALIGNMENT + MEM_ALIGNMENT;
-  return aligned_number;
-}
-
-size_t calculate_aligned_memory(size_t memory_size) {
-  size_t needed_memory = calculate_needed_memory(memory_size);
-  size_t aligned_memory = align_up_to_multiple_of_16(needed_memory);
-  return aligned_memory;
-}
 
 void *create_top() {
   void *sbrk_result = sbrk(HEAP_PAGE);
@@ -44,8 +22,10 @@ void *create_top() {
 
 // Extends the top by the minimum number of pages to house a chunk of given size
 void *extend_top(size_t memory_size) {
-  void *extension_result =
-      sbrk((memory_size / HEAP_PAGE) * HEAP_PAGE + HEAP_PAGE);
+  size_t minimal_extension_size =
+      (memory_size / HEAP_PAGE) * HEAP_PAGE + HEAP_PAGE;
+  top->size += minimal_extension_size;
+  void *extension_result = sbrk(minimal_extension_size);
   return extension_result;
 }
 
@@ -53,6 +33,50 @@ void *extend_top(size_t memory_size) {
 // space left for its header
 int is_top_too_small(size_t memory_size) {
   return top->size <= memory_size + CHUNK_HDR_SIZE ? 1 : 0;
+}
+
+/* Two LSBs of our mchunks size are flags containing whether:
+ * 1. The previous chunk is currently in use
+ * 2. This chunk was allocated using mmap() instead of sbrk()
+ */
+
+int is_prev_mchunk_inuse(mchunk_t *memory_chunk) {
+  return memory_chunk->size & PREV_INUSE;
+}
+
+int is_chunk_mmaped(mchunk_t *memory_chunk) {
+  return memory_chunk->size & IS_MMAP;
+}
+
+void set_chunks_flag(mchunk_t *memory_chunk, unsigned long flag) {
+  memory_chunk->size |= flag;
+}
+
+void unset_chunks_flag(mchunk_t *memory_chunk, unsigned long flag) {
+  memory_chunk->size &= ~(flag);
+}
+
+size_t calculate_needed_memory(size_t chunks_payload) {
+  size_t needed_memory = chunks_payload + CHUNK_HDR_SIZE <= MIN_CHUNK_SIZE
+                             ? MIN_CHUNK_SIZE
+                             : chunks_payload + CHUNK_HDR_SIZE;
+  return needed_memory;
+}
+
+// Our memory chunks are going to be 16 bit aligned in order for our heap to
+// work correctly on 64 bit systems.
+size_t align_up_to_multiple_of_16(size_t number_to_align) {
+  size_t aligned_number =
+      number_to_align % MEM_ALIGNMENT == 0
+          ? number_to_align
+          : number_to_align - number_to_align % MEM_ALIGNMENT + MEM_ALIGNMENT;
+  return aligned_number;
+}
+
+size_t calculate_aligned_memory(size_t memory_size) {
+  size_t needed_memory = calculate_needed_memory(memory_size);
+  size_t aligned_memory = align_up_to_multiple_of_16(needed_memory);
+  return aligned_memory;
 }
 
 /*  For allocating memory we're gonna consider 3 possibilities
@@ -72,6 +96,7 @@ void *create_chunk_and_return_payloads_pointer(size_t memory_size) {
   top = (mchunk_t *)((char *)top + memory_size);
   top->size = (char *)sbrk(0) - (char *)top;
   top->prev_size = memory_size;
+  set_chunks_flag(top, PREV_INUSE);
   return return_ptr;
 }
 
@@ -105,6 +130,4 @@ void *allocate(size_t size) {
   return result_ptr;
 }
 
-int main() {
-  return 0;
-}
+int main() { return 0; }
