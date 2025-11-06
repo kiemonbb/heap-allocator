@@ -47,17 +47,19 @@ int is_top_too_small(size_t memory_size) {
 
 /* Two LSBs of our mchunks size are flags containing whether:
  * 1. The previous chunk is currently in use
- * 2. This chunk was allocated using mmap() instead of sbrk()
+ * 2. Is this chunk in use
+ * 3. This chunk was allocated using mmap() instead of sbrk()
  */
 
-int is_prev_mchunk_inuse(mchunk_t *memory_chunk) {
+int is_prev_mchunk_in_use(mchunk_t *memory_chunk) {
   return memory_chunk->size_with_flags & PREV_INUSE;
 }
 
 int is_chunk_mmaped(mchunk_t *memory_chunk) {
   return memory_chunk->size_with_flags & IS_MMAP;
 }
-int is_inuse(mchunk_t *memory_chunk) {
+
+int is_in_use(mchunk_t *memory_chunk) {
   return memory_chunk->size_with_flags & IS_INUSE;
 }
 
@@ -142,7 +144,7 @@ mchunk_t *get_previous_chunk(mchunk_t *memory_chunk) {
   return previous_chunk;
 }
 
-void delete_from_bin(mchunk_t *memory_chunk) {
+void remove_from_bin(mchunk_t *memory_chunk) {
 
   // check whether memory_chunk is some bins head
   for (int i = 0; i < BIN_COUNT; ++i) {
@@ -165,41 +167,37 @@ void delete_from_bin(mchunk_t *memory_chunk) {
   memory_chunk->fd_chunk = memory_chunk->bk_chunk = NULL;
 }
 
-mchunk_t *coalesce_two_chunks(mchunk_t *first_chunk, mchunk_t *second_chunk) {
-  first_chunk->size_with_flags = get_size(first_chunk) + get_size(second_chunk);
-  return first_chunk;
+mchunk_t *coalesce_two_chunks(mchunk_t *previous_chunk, mchunk_t *next_chunk) {
+  previous_chunk->size_with_flags += get_size(next_chunk);
+  return previous_chunk;
 }
 
+// TODO: refactor this function
+//       correctly set prev_size variable and prev_in_use flag for new chunk
 mchunk_t *coalesce_neighbouring_chunks(mchunk_t *memory_chunk) {
-  if (!(memory_chunk->prev_size == 0) && !is_prev_mchunk_inuse(memory_chunk)) {
+  // If exists coalesce with previous chunk
+  if (!(memory_chunk->prev_size == 0) && !is_prev_mchunk_in_use(memory_chunk)) {
     mchunk_t *previous_chunk = get_previous_chunk(memory_chunk);
-    if (!is_inuse(previous_chunk) && !is_chunk_mmaped(previous_chunk)) {
-      delete_from_bin(previous_chunk);
-      memory_chunk = coalesce_two_chunks(previous_chunk, memory_chunk);
-    }
+    remove_from_bin(previous_chunk);
+    memory_chunk = coalesce_two_chunks(previous_chunk, memory_chunk);
   }
 
+  // If exists and is not top coalesce with next chunk
   mchunk_t *next_chunk = get_next_chunk(memory_chunk);
-  if (next_chunk != top && !is_inuse(next_chunk) &&
-      !is_chunk_mmaped(next_chunk)) {
-    delete_from_bin(next_chunk);
+  if (next_chunk != top && !is_in_use(next_chunk)) {
+    remove_from_bin(next_chunk);
     memory_chunk = coalesce_two_chunks(memory_chunk, next_chunk);
   }
 
-  memory_chunk->size_with_flags = get_size(memory_chunk);
-
   mchunk_t *following = get_next_chunk(memory_chunk);
-  if (following) {
-    following->prev_size = memory_chunk->size_with_flags;
-    unset_chunks_flag(following, PREV_INUSE);
-  }
+  following->prev_size = get_size(memory_chunk);
 
   return memory_chunk;
 }
 
 /*
  * bins[0] = N/A
- * bins[1] = unsorted bin
+ * bins[1] = unsorted bin (to be implemented)
  * bins[2-63] = small bins(ranging from 32 to 1008 bytes)
  * bins[64-95] = large bins with 64 byte spacing
  * bins[96-111] = large bins with 512 byte spacing
@@ -230,7 +228,9 @@ int find_appropriate_bin(size_t memory_size) {
   }
 }
 
-void add_chunk_to_bin(mchunk_t *memory_chunk, int bin_number) {
+void add_chunk_to_bin(mchunk_t *memory_chunk) {
+  size_t true_size = get_size(memory_chunk);
+  int bin_number = find_appropriate_bin(true_size);
   memory_chunk->fd_chunk = memory_chunk->bk_chunk = NULL;
 
   if (bins[bin_number] == NULL) {
@@ -259,13 +259,13 @@ void add_chunk_to_bin(mchunk_t *memory_chunk, int bin_number) {
   current->fd_chunk = memory_chunk;
 }
 
-mchunk_t *find_chunk_in_bin(size_t memory_size) {
+mchunk_t *find_and_remove_chunk_from_bin(size_t memory_size) {
   int bin_number = find_appropriate_bin(memory_size);
   for (int i = bin_number; i < BIN_COUNT; i++) {
     mchunk_t *current = bins[i];
     while (current) {
       if (get_size(current) >= memory_size) {
-        delete_from_bin(current);
+        remove_from_bin(current);
         return current;
       }
       current = current->fd_chunk;
@@ -273,19 +273,24 @@ mchunk_t *find_chunk_in_bin(size_t memory_size) {
   }
   return NULL;
 }
+void merge_chunk_with_top(mchunk_t *memory_chunk) {
+  size_t top_size = get_size(top);
+  top = memory_chunk;
+  top->size_with_flags += top_size;
+}
+
 void free_sbrk_memory(mchunk_t *memory_chunk) {
   mchunk_t *coalesced_chunk = coalesce_neighbouring_chunks(memory_chunk);
+
+  mchunk_t *next_chunk = get_next_chunk(coalesced_chunk);
+  unset_chunks_flag(next_chunk, PREV_INUSE);
+
   // Merge newly coalesced chunk with the top
-  if (get_next_chunk(coalesced_chunk) == top) {
-    size_t top_size = get_size(top);
-    top = coalesced_chunk;
-    top->size_with_flags += top_size;
-    top->prev_size = 0;
+  if (next_chunk == top) {
+    merge_chunk_with_top(coalesced_chunk);
     return;
   }
-  size_t true_size = get_size(coalesced_chunk);
-  int bin_number = find_appropriate_bin(true_size);
-  add_chunk_to_bin(coalesced_chunk, bin_number);
+  add_chunk_to_bin(coalesced_chunk);
 }
 
 void *allocate_with_mmap(size_t memory_size) {}
@@ -293,16 +298,18 @@ void *allocate_with_mmap(size_t memory_size) {}
 void *allocate_with_sbrk(size_t memory_size) {
   void *memory_ptr;
   // Check bins for appropriate allocations
-  mchunk_t *memory_chunk = find_chunk_in_bin(memory_size);
+  mchunk_t *memory_chunk = find_and_remove_chunk_from_bin(memory_size);
+  //
+  // Set appropriate flags for the found chunk and its neighbour
   if (memory_chunk) {
     set_chunks_flag(memory_chunk, IS_INUSE);
     mchunk_t *following = get_next_chunk(memory_chunk);
     set_chunks_flag(following, PREV_INUSE);
-
     memory_ptr = mchunk_into_payload(memory_chunk);
     return memory_ptr;
   }
 
+  // Check whether top exists and if it's big enough
   void *result_ptr = NULL;
   if (!top) {
     void *creation_result = create_top();
@@ -316,6 +323,8 @@ void *allocate_with_sbrk(size_t memory_size) {
       return NULL;
     }
   }
+
+  // Slice a chunk off top
   memory_ptr = create_chunk_and_return_payloads_pointer(memory_size);
   return memory_ptr;
 }
@@ -329,14 +338,6 @@ void free_memory(void *payload_ptr) {
   } else {
     free_sbrk_memory(memory_chunk);
   }
-
-  // mchunk_t *next_chunk = get_next_chunk(memory_chunk);
-  // unset_chunks_flag(next_chunk, PREV_INUSE);
-  //  TEMP CODE
-
-  /* 1. Merge with neighbouring chunks
-   * 2. Calculate in what bin to place created chunk
-   */
 }
 
 void *allocate(size_t size) {

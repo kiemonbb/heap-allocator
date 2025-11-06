@@ -31,8 +31,8 @@
 // chunks
 typedef struct mchunk_t {
   size_t prev_size;
-  size_t size_with_flags; // the last 2 bits here are going to be used as flags, because of
-               // the 16 bit alignment
+  size_t size_with_flags; // the last 2 bits here are going to be used as flags,
+                          // because of the 16 bit alignment
   struct mchunk_t *fd_chunk;
   struct mchunk_t *bk_chunk;
 } mchunk_t;
@@ -43,7 +43,7 @@ extern mchunk_t *top;
 
 extern mchunk_t *bins[BIN_COUNT];
 
-int is_prev_mchunk_inuse(mchunk_t *memory_chunk);
+int is_prev_mchunk_in_use(mchunk_t *memory_chunk);
 
 int is_chunk_mmaped(mchunk_t *memory_chunk);
 
@@ -77,27 +77,25 @@ void *mchunk_into_payload(mchunk_t *memory_chunk);
 
 mchunk_t *get_next_chunk(mchunk_t *memory_chunk);
 
-void add_chunk_to_freelist(mchunk_t *memory_chunk);
-
-void create_freelist(mchunk_t *memory_chunk);
-
 void free_memory(void *payload_ptr);
 
 mchunk_t *get_next_chunk(mchunk_t *memory_chunk);
 
 mchunk_t *get_previous_chunk(mchunk_t *memory_chunk);
 
-void delete_from_bin(mchunk_t *memory_chunk);
+void remove_from_bin(mchunk_t *memory_chunk);
 
 mchunk_t *coalesce_two_chunks(mchunk_t *first_chunk, mchunk_t *second_chunk);
 
 mchunk_t *coalesce_neighbouring_chunks(mchunk_t *memory_chunk);
 
+void merge_chunk_with_top(mchunk_t *memory_chunk);
+
 int find_appropriate_bin(size_t memory_size);
 
-void add_chunk_to_bin(mchunk_t *memory_chunk, int bin_number);
+void add_chunk_to_bin(mchunk_t *memory_chunk);
 
-mchunk_t *find_chunk_in_bin(size_t memory_size);
+mchunk_t *find_and_remove_chunk_from_bin(size_t memory_size);
 
 void free_sbrk_memory(mchunk_t *memory_chunk);
 
