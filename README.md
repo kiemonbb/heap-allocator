@@ -7,8 +7,7 @@
 
 ## Overview
 
-A single-threaded memory allocator implementing `malloc` and `free` in C. The implementation is base on dlmalloc.
-The memory is managed by `sbrk()` using chunk-based heap with size-aggregated bins and coalescing.
+A single-threaded memory allocator implementing `malloc` and `free` in C. The implementation is based on dlmalloc. The memory is managed by `sbrk()` using chunk-based heap with size-aggregated bins and coalescing.
 
 ## Usage
 ```c
@@ -29,3 +28,4 @@ gcc -o program main.c allocator.c
 
 ## License
 This project is licensed under the MIT License.
+
